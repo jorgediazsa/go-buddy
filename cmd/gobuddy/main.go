@@ -36,48 +36,58 @@ func main() {
 			os.Exit(1)
 		}
 	case "test":
-		level := ""
+		sel := ""
 		prefix := ""
 		if len(args) >= 2 {
-			level = strings.ToLower(args[1])
+			sel = args[1] // may be level or subpath like intermediate/topic10_channels
 		}
 		if len(args) >= 3 {
 			prefix = strings.ToLower(args[2])
 		}
-		if err := cmdTest(level, prefix); err != nil {
+		if err := cmdTestFlexible(sel, prefix); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
 		}
-	case "beginner":
-		prefix := ""
+	case "beginner", "intermediate", "advanced":
+		// Support optional subpath like: intermediate/topic10_channels
+		// When invoked as alias with subpath, reconstruct selector accordingly.
+		sel := cmd
 		if len(args) >= 2 {
+			// allow forms: intermediate ex03  OR  intermediate/topic10_channels [exNN]
+			if strings.HasPrefix(args[1], cmd+"/") {
+				sel = args[1]
+			} else if strings.Contains(args[1], "/") {
+				sel = args[1]
+			}
+		}
+		prefix := ""
+		// prefix may be in 2nd or 3rd argument depending on subpath usage
+		if len(args) >= 3 {
+			prefix = strings.ToLower(args[2])
+		} else if len(args) == 2 && !strings.Contains(args[1], "/") && !strings.HasPrefix(args[1], cmd+"/") {
+			// form: intermediate ex03
 			prefix = strings.ToLower(args[1])
 		}
-		if err := cmdTest("beginner", prefix); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			os.Exit(1)
-		}
-	case "intermediate":
-		prefix := ""
-		if len(args) >= 2 {
-			prefix = strings.ToLower(args[1])
-		}
-		if err := cmdTest("intermediate", prefix); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			os.Exit(1)
-		}
-	case "advanced":
-		prefix := ""
-		if len(args) >= 2 {
-			prefix = strings.ToLower(args[1])
-		}
-		if err := cmdTest("advanced", prefix); err != nil {
+		if err := cmdTestFlexible(sel, prefix); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
 		}
 	default:
-		usage()
-		os.Exit(1)
+		// Allow direct path-like selector as a command alias, e.g. "intermediate/topic10_channels"
+		if strings.HasPrefix(cmd, "beginner/") || strings.HasPrefix(cmd, "intermediate/") || strings.HasPrefix(cmd, "advanced/") {
+			sel := cmd
+			prefix := ""
+			if len(args) >= 2 {
+				prefix = strings.ToLower(args[1])
+			}
+			if err := cmdTestFlexible(sel, prefix); err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+				os.Exit(1)
+			}
+		} else {
+			usage()
+			os.Exit(1)
+		}
 	}
 }
 
@@ -87,11 +97,11 @@ func usage() {
 	fmt.Println("Usage:")
 	fmt.Println("  gobuddy list")
 	fmt.Println("  gobuddy test")
-	fmt.Println("  gobuddy test <level>")
-	fmt.Println("  gobuddy test <level> <exercisePrefix>")
-	fmt.Println("  gobuddy beginner [exercisePrefix]")
-	fmt.Println("  gobuddy intermediate [exercisePrefix]")
-	fmt.Println("  gobuddy advanced [exercisePrefix]")
+	fmt.Println("  gobuddy test <level | level/subpath>")
+	fmt.Println("  gobuddy test <level | level/subpath> <exercisePrefix>")
+	fmt.Println("  gobuddy beginner [exercisePrefix | level/subpath [exercisePrefix]]")
+	fmt.Println("  gobuddy intermediate [exercisePrefix | intermediate/subpath [exercisePrefix]]")
+	fmt.Println("  gobuddy advanced [exercisePrefix | advanced/subpath [exercisePrefix]]")
 	fmt.Println()
 	fmt.Println("Levels discovered dynamically: beginner/, intermediate/, advanced/")
 }
@@ -107,13 +117,23 @@ func cmdList() error {
 	}
 	fmt.Println("Levels and exercises:")
 	for _, level := range levels {
-		prefixes, _ := discoverExercisePrefixes(level)
 		fmt.Printf("- %s\n", level)
-		if len(prefixes) == 0 {
-			fmt.Println("    (no exercises)")
-			continue
+		// Discover subfolders (topics)
+		topics, _ := os.ReadDir(level)
+		for _, t := range topics {
+			if t.IsDir() {
+				topicPath := filepath.Join(level, t.Name())
+				prefixes, _ := discoverExercisePrefixes(topicPath)
+				if len(prefixes) > 0 {
+					fmt.Printf("  - %s\n", topicPath)
+					for _, p := range prefixes {
+						fmt.Printf("      %s\n", p)
+					}
+				}
+			}
 		}
-		sort.Strings(prefixes)
+		// Also check the level root for exercises
+		prefixes, _ := discoverExercisePrefixes(level)
 		for _, p := range prefixes {
 			fmt.Printf("    %s\n", p)
 		}
@@ -121,26 +141,45 @@ func cmdList() error {
 	return nil
 }
 
-func cmdTest(level string, prefix string) error {
-	// Build test command
-	if level == "" {
-		// All levels
-		return runGoTest([]string{"test", "./..."})
-	}
-	allowed := map[string]bool{"beginner": true, "intermediate": true, "advanced": true}
-	if !allowed[level] {
-		return fmt.Errorf("unknown level: %s", level)
-	}
-	pkgPath := fmt.Sprintf("./%s", level)
-	args := []string{"test", pkgPath}
+func cmdTestFlexible(selector string, prefix string) error {
+	// selector can be empty (all), a level (beginner/intermediate/advanced), or a subpath like intermediate/topic10_channels
+	runArgs := []string{"test"}
+	pattern := "" // -run pattern for exNN
 	if prefix != "" {
-		// Sanitize: allow exNN pattern
 		if !regexp.MustCompile(`^ex\d{2}$`).MatchString(prefix) {
 			return errors.New("exercise prefix must look like exNN, e.g. ex01")
 		}
-		args = append(args, "-run", fmt.Sprintf("%s", strings.ToUpper(prefix)))
+		pattern = strings.ToUpper(prefix)
 	}
-	return runGoTest(args)
+
+	// determine path
+	if selector == "" {
+		runArgs = append(runArgs, "./...")
+	} else {
+		sel := selector
+		// normalize potential trailing / or leading ./
+		sel = strings.TrimPrefix(sel, "./")
+		// if it's a top-level level, run all subpackages
+		if sel == "beginner" || sel == "intermediate" || sel == "advanced" {
+			runArgs = append(runArgs, fmt.Sprintf("./%s/...", sel))
+		} else if strings.HasPrefix(sel, "beginner/") || strings.HasPrefix(sel, "intermediate/") || strings.HasPrefix(sel, "advanced/") {
+			// run this subtree
+			runArgs = append(runArgs, fmt.Sprintf("./%s/...", sel))
+		} else {
+			// support legacy: level only
+			allowed := map[string]bool{"beginner": true, "intermediate": true, "advanced": true}
+			if allowed[strings.ToLower(sel)] {
+				runArgs = append(runArgs, fmt.Sprintf("./%s/...", strings.ToLower(sel)))
+			} else {
+				return fmt.Errorf("unknown selector: %s", selector)
+			}
+		}
+	}
+
+	if pattern != "" {
+		runArgs = append(runArgs, "-run", pattern)
+	}
+	return runGoTest(runArgs)
 }
 
 func runGoTest(args []string) error {
