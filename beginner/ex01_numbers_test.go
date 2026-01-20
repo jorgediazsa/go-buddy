@@ -16,16 +16,26 @@ func TestEX01_ParseUint8Strict(t *testing.T) {
 		{"255", true, 255},
 		{"001", true, 1},
 		{"000", true, 0},
+
 		{"256", false, 0},
+		{"000256", false, 0}, // overflow even with leading zeros
+
 		{"-1", false, 0},
-		{"+1", false, 0},
-		{" 1", false, 0},
-		{"1 ", false, 0},
-		{"12a", false, 0},
-		{"", false, 0},
+		{"+1", false, 0},   // strict: no signs
+		{" 1", false, 0},   // strict: no spaces
+		{"1 ", false, 0},   // strict: no spaces
+		{"12a", false, 0},  // non-digit
+		{"1_0", false, 0},  // underscore not allowed
+		{"01\t", false, 0}, // hidden whitespace
+		{"01\n", false, 0}, // hidden whitespace
+		{"", false, 0},     // empty
 	}
+
 	for _, tc := range cases {
-		t.Run("EX01_ParseUint8Strict_"+tc.in, func(t *testing.T) {
+		tc := tc
+		t.Run(fmt.Sprintf("in=%q", tc.in), func(t *testing.T) {
+			t.Parallel()
+
 			got, err := ParseUint8Strict(tc.in)
 			if tc.ok && err != nil {
 				t.Fatalf("unexpected error: %v", err)
@@ -43,24 +53,35 @@ func TestEX01_ParseUint8Strict(t *testing.T) {
 func TestEX01_AddInt32(t *testing.T) {
 	M := int32(math.MaxInt32)
 	m := int32(math.MinInt32)
+
 	cases := []struct {
+		name string
 		a, b int32
 		ok   bool
 		want int32
 	}{
-		{0, 0, true, 0},
-		{1, 2, true, 3},
-		{-1, 1, true, 0},
-		{123456, -123456, true, 0},
-		{M, 0, true, M},
-		{m, 0, true, m},
-		{M, 1, false, 0},
-		{m, -1, false, 0},
-		{M, -1, true, M - 1},
-		{m, 1, true, m + 1},
+		{"zero", 0, 0, true, 0},
+		{"small_pos", 1, 2, true, 3},
+		{"cancel", -1, 1, true, 0},
+		{"cancel_big", 123456, -123456, true, 0},
+		{"max_plus_zero", M, 0, true, M},
+		{"min_plus_zero", m, 0, true, m},
+
+		{"overflow_max_plus_1", M, 1, false, 0},
+		{"underflow_min_minus_1", m, -1, false, 0},
+
+		{"near_max_minus_1", M, -1, true, M - 1},
+		{"near_min_plus_1", m, 1, true, m + 1},
+
+		{"overflow_max_plus_max", M, M, false, 0},
+		{"underflow_min_plus_min", m, m, false, 0},
 	}
-	for i, tc := range cases {
-		t.Run("EX01_AddInt32_"+string(rune('A'+i)), func(t *testing.T) {
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			got, err := AddInt32(tc.a, tc.b)
 			if tc.ok && err != nil {
 				t.Fatalf("unexpected error: %v", err)
@@ -77,42 +98,42 @@ func TestEX01_AddInt32(t *testing.T) {
 
 func TestEX01_PercentOf(t *testing.T) {
 	cases := []struct {
+		name        string
 		part, total int64
 		ok          bool
 		want        int64
 	}{
-		{0, 100, true, 0},
-		{1, 100, true, 1},
-		{33, 100, true, 33},
-		{50, 200, true, 25},
-		{100, 100, true, 100},
-		{3, 7, true, 42}, // floor(42.857)
-		{1, 3, true, 33},
-		{10, 0, false, 0},
-		{-1, 10, false, 0},
-		{11, 10, false, 0},
+		{"zero", 0, 100, true, 0},
+		{"one_percent", 1, 100, true, 1},
+		{"thirty_three", 33, 100, true, 33},
+		{"quarter", 50, 200, true, 25},
+		{"all", 100, 100, true, 100},
+		{"floor_3_7", 3, 7, true, 42}, // floor(42.857...)
+		{"floor_1_3", 1, 3, true, 33},
+
+		{"invalid_total_zero", 10, 0, false, 0},
+		{"invalid_part_negative", -1, 10, false, 0},
+		{"invalid_part_gt_total", 11, 10, false, 0},
+
+		// Forces overflow guard for (part*100)
+		{"overflow_part_times_100", math.MaxInt64/100 + 1, math.MaxInt64, false, 0},
 	}
+
 	for _, tc := range cases {
-		name := "EX01_PercentOf_" + fmtInt64(tc.part) + "_" + fmtInt64(tc.total)
-		t.Run(name, func(t *testing.T) {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			got, err := PercentOf(tc.part, tc.total)
-			fmt.Println("part: ", tc.part, "total: ", tc.total)
 			if tc.ok && err != nil {
-				t.Fatalf("unexpected error: %v, got: %v", err, got)
+				t.Fatalf("unexpected error: %v (got=%d)", err, got)
 			}
 			if !tc.ok && err == nil {
-				t.Fatalf("expected error, got nil")
+				t.Fatalf("expected error, got nil (got=%d)", got)
 			}
 			if tc.ok && got != tc.want {
 				t.Fatalf("got %d want %d", got, tc.want)
 			}
 		})
 	}
-}
-
-func fmtInt64(v int64) string {
-	if v < 0 {
-		return "m"
-	}
-	return string(rune('a' + (v % 26)))
 }
