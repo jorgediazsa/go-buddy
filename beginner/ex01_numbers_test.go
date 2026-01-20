@@ -1,6 +1,7 @@
 package beginner
 
 import (
+	"fmt"
 	"math"
 	"testing"
 )
@@ -95,8 +96,9 @@ func TestEX01_PercentOf(t *testing.T) {
 		name := "EX01_PercentOf_" + fmtInt64(tc.part) + "_" + fmtInt64(tc.total)
 		t.Run(name, func(t *testing.T) {
 			got, err := PercentOf(tc.part, tc.total)
+			fmt.Println("part: ", tc.part, "total: ", tc.total)
 			if tc.ok && err != nil {
-				t.Fatalf("unexpected error: %v", err)
+				t.Fatalf("unexpected error: %v, got: %v", err, got)
 			}
 			if !tc.ok && err == nil {
 				t.Fatalf("expected error, got nil")
