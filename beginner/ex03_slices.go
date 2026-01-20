@@ -25,12 +25,9 @@ Tricky edge cases
 import "errors"
 
 // CloneInts returns a deep copy of src (nil→nil, empty→empty with distinct backing).
-func CloneInts(src []int) []int { // TODO: implement
-	if src == nil {
-		return nil
-	}
-	// placeholder distinct empty slice for len==0
-	return append([]int(nil), src...)
+func CloneInts(src []int) []int {
+	// TODO: implement
+	return nil
 }
 
 // RotateLeftInPlace rotates the slice left by k steps in-place.
